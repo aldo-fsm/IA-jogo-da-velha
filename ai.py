@@ -1,8 +1,11 @@
 import tensorflow as tf
 import numpy as np
+import time
 
 class NeuralNet:
-    def __init__(self, nb_inputs, nb_hidden, nb_outputs, learning_rate):
+    def __init__(self, nb_inputs, nb_hidden, nb_outputs, learning_rate, logdir=None):
+        self.logdir = logdir
+        self.iterations = 0
         self.nb_outputs = nb_outputs
         self.session = tf.Session()
         self.x = tf.placeholder(tf.float32, shape=(None, nb_inputs), name='input')
@@ -29,15 +32,23 @@ class NeuralNet:
         
         self.variable_initializer = tf.global_variables_initializer()
         self.session.run(self.variable_initializer)
-    
+
+        self.loss_summary = tf.summary.scalar('loss', self.loss)
+        if logdir:
+            self.writer = tf.summary.FileWriter(logdir, self.session.graph)
+
     def learn(self, x, y_target):
-        self.session.run(
-            self.train_step,
+        summary, _ = self.session.run(
+            [self.loss_summary, self.train_step],
             feed_dict={
                 self.x : x,
                 self.y_target : y_target
             }
         )
+        if self.logdir:
+            self.writer.add_summary(summary, self.iterations)
+        self.iterations += 1
+        
     def predict_probs(self, x, softmax_temperature=1, softmax_indexes=None):
         if softmax_indexes == None:
             softmax_indexes = list(range(self.nb_outputs))
@@ -61,11 +72,16 @@ class NeuralNet:
 class Dqn:
     def __init__(self, reward_decay, nb_hidden, learning_rate, softmax_temperature):
         self.reward_decay = reward_decay
+        self.reward_window_length = 100
+        self.reward_window = []
         self.softmax_temperature = softmax_temperature
-        self.memory = ExperienceReplay(1000)
+        self.batch_size = 7000
+        self.memory_capacity = 10000
+        self.memory = ExperienceReplay(self.memory_capacity)
         self.last_state = None
         self.last_action = None
-        self.brain = NeuralNet(9, nb_hidden, 9, learning_rate)
+        self.brain = NeuralNet(9, nb_hidden, 9, learning_rate, logdir='/tmp/tensorboard/ia_velha/'+str(time.time()))
+        # self.brain = NeuralNet(9, nb_hidden, 9, learning_rate)
         
     def encode_board(self, board):
         map_dict = {'X':-1,'':0,'O':1}
@@ -88,14 +104,22 @@ class Dqn:
         else:
             return -1
 
+    def average_score(self):
+        if len(self.reward_window) == self.reward_window_length:
+            return np.mean(self.reward_window)
+        else:
+            return np.mean(self.reward_window+[0]*(self.reward_window_length-len(self.reward_window)))
+    
     def update(self, new_state, reward):
-        print(len(self.memory))
+        print(self.average_score(), len(self.memory))
+        self.reward_window.append(reward)
+        self.reward_window = self.reward_window[-self.reward_window_length:]
         action = self.choose_action(new_state)
         new_state = self.encode_board(new_state)
         if self.last_state:
             self.memory.append(self.last_state, new_state, self.last_action, reward)
         if len(self.memory) > 0:
-            last_state_batch, new_state_batch, action_batch, reward_batch = self.memory.sample(200)
+            last_state_batch, new_state_batch, action_batch, reward_batch = self.memory.sample(self.batch_size)
             new_state_value = np.max(self.brain.predict(new_state_batch), axis=1)
             target_q = reward_batch + self.reward_decay*new_state_value
             current_q = self.brain.predict(last_state_batch)

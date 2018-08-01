@@ -8,7 +8,7 @@ import time
 import numpy as np
 import ai
 
-dqn = ai.Dqn(0.9,[50,30,20],0.01, 0.5)
+dqn = ai.Dqn(0.9,[50,30],0.001, 1)
 
 class BoardScreen(Screen):
     board = ListProperty(9*[''])
@@ -46,7 +46,7 @@ class BoardScreen(Screen):
 
     def nextTurn(self):
         self.turn = 'X' if self.turn == 'O' else 'O' 
-        
+
     def random(self):
         if self.status == 'running':
             state = self.board
@@ -69,7 +69,7 @@ class BoardScreen(Screen):
         if self.random_play_event == None:
             self.random_play_event = Clock.schedule_interval(
                 lambda dt : self.random()
-            , 0.01)
+            , 0.005)
         else:
             self.random_play_event.cancel()
             self.random_play_event = None
