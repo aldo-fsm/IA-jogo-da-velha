@@ -1,5 +1,5 @@
 #:kivy 1.10.0
-#:import Button kivy.uix.button.Button
+
 <ScreenManager>:
     BoardScreen:
         id: boardScreen
@@ -8,8 +8,15 @@
             BoxLayout:
                 orientation: 'horizontal'
                 size_hint: (1, 0.1)
-                Label:
-                    text: 'X: ' + str(boardScreen.x_wins)
+                spacing: 10
+                BoxLayout:
+                    orientation: 'vertical'
+                    Label:
+                        text: str(boardScreen.nb_matches)+' partidas'
+                    Label:
+                        text: 'X: ' + str(boardScreen.x_wins)
+                    Label:
+                        text: 'O: ' + str(boardScreen.o_wins)
                 Button:
                     text: 'Nova Partida'
                     on_press: boardScreen.restart()
@@ -17,16 +24,16 @@
                     pos_hint: {'center_y':0.5}
                 Button:
                     text: 'Random'
-                    on_press: boardScreen.random()
+                    # on_press: boardScreen.random()
+                    on_press: boardScreen.toggle_random()
                     size_hint: None, 0.5
                     pos_hint: {'center_y':0.5}
                 Button:
                     text: 'Play AI'
                     on_press: boardScreen.playAI()
+                    # on_press: boardScreen.toggle_playAI()
                     size_hint: None, 0.5
                     pos_hint: {'center_y':0.5}
-                Label:
-                    text: 'O: ' + str(boardScreen.o_wins)
             GridLayout:
                 rows: 3
                 cols: 3

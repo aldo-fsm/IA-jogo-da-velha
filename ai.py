@@ -1,33 +1,72 @@
 import tensorflow as tf
 import numpy as np
 
+class NeuralNet:
+    def __init__(self, nb_inputs, nb_hidden, nb_outputs, learning_rate):
+        self.nb_outputs = nb_outputs
+        self.session = tf.Session()
+        self.x = tf.placeholder(tf.float32, shape=(None, nb_inputs), name='input')
+        prev_layer = self.x
+        prev_layer_size = nb_inputs
+        for i in range(len(nb_hidden)):
+            W = tf.Variable(0.1*np.random.randn(prev_layer_size, nb_hidden[i]), dtype=tf.float32, name='W'+str(i))
+            b = tf.Variable(0.1*np.random.randn(nb_hidden[i]), dtype=tf.float32, name='b'+str(i))
+            h = tf.nn.relu(tf.matmul(prev_layer, W) + b, name='hidden'+str(i))
+            prev_layer = h
+            prev_layer_size = nb_hidden[i]
+        W = tf.Variable(0.1*np.random.randn(prev_layer_size, nb_outputs), dtype=tf.float32, name='W'+str(len(nb_hidden)))
+        b = tf.Variable(0.1*np.random.randn(nb_outputs), dtype=tf.float32, name='b'+str(len(nb_hidden)))
+        self.y = tf.add(tf.matmul(prev_layer, W), b, name='output')
+        
+        self.y_target = tf.placeholder(tf.float32, shape=(None, nb_outputs), name='target_output')
+        self.loss = tf.losses.huber_loss(self.y_target, self.y)
+        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+        self.train_step = self.optimizer.minimize(self.loss)
+        
+        self.softmax_indexes = tf.placeholder(tf.int32, name='softmax_indexes')
+        self.softmax_temperature = tf.placeholder(tf.float32, name='softmax_temperature')
+        self.probs = tf.nn.softmax(tf.gather(self.y/self.softmax_temperature, self.softmax_indexes, axis=1, name='probabilities'))
+        
+        self.variable_initializer = tf.global_variables_initializer()
+        self.session.run(self.variable_initializer)
+    
+    def learn(self, x, y_target):
+        self.session.run(
+            self.train_step,
+            feed_dict={
+                self.x : x,
+                self.y_target : y_target
+            }
+        )
+    def predict_probs(self, x, softmax_temperature=1, softmax_indexes=None):
+        if softmax_indexes == None:
+            softmax_indexes = list(range(self.nb_outputs))
+        return self.session.run(
+            self.probs,
+            feed_dict={
+                self.x: x,
+                self.softmax_temperature: softmax_temperature,
+                self.softmax_indexes: softmax_indexes
+            }
+        )
+
+    def predict(self, x):
+        return self.session.run(
+            self.y,
+            feed_dict={
+                self.x: x
+            }
+        )
+
 class Dqn:
-    def __init__(self, reward_decay, nb_hidden, learning_rate, softmax_temp=3):
+    def __init__(self, reward_decay, nb_hidden, learning_rate, softmax_temperature):
         self.reward_decay = reward_decay
-        self.memory = ActionReplay(1000)
+        self.softmax_temperature = softmax_temperature
+        self.memory = ExperienceReplay(1000)
         self.last_state = None
         self.last_action = None
-        self.session = tf.Session()
-        self.state = tf.placeholder(tf.float32, shape=(None, 9), name='input')
+        self.brain = NeuralNet(9, nb_hidden, 9, learning_rate)
         
-        W1 = tf.Variable(np.random.randn(9, nb_hidden), dtype=tf.float32, name='W1')
-        b1 = tf.Variable(np.random.randn(nb_hidden), dtype=tf.float32, name='b1')
-        h1 = tf.nn.relu(tf.matmul(self.state, W1) + b1, name='hidden1')
-        
-        W2 = tf.Variable(np.random.randn(nb_hidden, 9), dtype=tf.float32, name='W2')
-        b2 = tf.Variable(np.random.randn(9), dtype=tf.float32, name='b2')
-        self.q_values = tf.add(tf.matmul(h1, W2), b2, name='q_values')
-        self.available_actions = tf.placeholder(tf.int32, name='available_actions')
-        self.probs = tf.nn.softmax(tf.gather(self.q_values/softmax_temp, self.available_actions, axis=1, name='action_probabilities'))
-
-        self.target_q = tf.placeholder(tf.float32, shape=(None, 9), name='target_q_values')
-        self.loss = tf.losses.huber_loss(self.target_q, self.q_values)
-        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-        self.variable_initializer = tf.global_variables_initializer()
-        self.train_step = self.optimizer.minimize(self.loss)
-    
-        self.session.run(self.variable_initializer)
-
     def encode_board(self, board):
         map_dict = {'X':-1,'':0,'O':1}
         return list(map(lambda x : map_dict[x], board))
@@ -36,12 +75,11 @@ class Dqn:
         state = self.encode_board(state)
         available_actions = [i for i in range(len(state)) if not state[i]]
         if len(available_actions) > 0:
-            probs = self.session.run(
-                self.probs,
-                feed_dict={
-                    self.state: [state],
-                    self.available_actions: available_actions
-                })[0]
+            probs = self.brain.predict_probs(
+                [state],
+                softmax_temperature=self.softmax_temperature,
+                softmax_indexes=available_actions
+            )[0]
             sorting_indexes = np.argsort(probs)
             index = np.argmax(np.random.multinomial(1, probs[sorting_indexes]))
             available_actions = np.array(available_actions)[sorting_indexes]
@@ -58,31 +96,23 @@ class Dqn:
             self.memory.append(self.last_state, new_state, self.last_action, reward)
         if len(self.memory) > 0:
             last_state_batch, new_state_batch, action_batch, reward_batch = self.memory.sample(200)
-
-            new_state_value = np.max(self.session.run(self.q_values,
-                feed_dict={
-                    self.state : new_state_batch
-                }), axis=1)
-            target_q = reward_batch + new_state_value
-            current_q = self.session.run(self.q_values,
-                feed_dict={
-                    self.state : last_state_batch
-                })
+            new_state_value = np.max(self.brain.predict(new_state_batch), axis=1)
+            target_q = reward_batch + self.reward_decay*new_state_value
+            current_q = self.brain.predict(last_state_batch)
+            
             target_batch = []
             for i in range(len(target_q)):
                 row = np.array(current_q[i])
                 row[action_batch[i]] = target_q[i]
                 target_batch.append(row)
-            self.session.run(self.train_step,
-                feed_dict={
-                    self.state : last_state_batch,
-                    self.target_q : target_batch
-                })
+            
+            self.brain.learn(last_state_batch, target_batch)
+
         self.last_action = action
         self.last_state = new_state
         return action
 
-class ActionReplay:
+class ExperienceReplay:
     def __init__(self, capacity):
         self.capacity = capacity
         self.memory = []
