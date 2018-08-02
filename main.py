@@ -8,7 +8,7 @@ import time
 import numpy as np
 import ai
 
-dqn = ai.Dqn(0.9,[40,30],0.001, 1)
+dqn = ai.Dqn(0.9,[100,50],0.001, 1)
 
 class BoardScreen(Screen):
     board = ListProperty(9*[''])

@@ -3,39 +3,55 @@ import tensorflow as tf
 import numpy as np
 
 class NeuralNet:
-    def __init__(self, session, nb_inputs, nb_hidden, nb_outputs, learning_rate, logdir=None):
-        self.logdir = logdir
+    def __init__(self, session, nb_inputs, nb_hidden, nb_outputs, learning_rate):
         self.iterations = 0
         self.nb_outputs = nb_outputs
         self.parameters = []
         self.session = session
+        summaries = []
         self.x = tf.placeholder(tf.float32, shape=(None, nb_inputs), name='input')
         prev_layer = self.x
         prev_layer_size = nb_inputs
         for i in range(len(nb_hidden)):
-            W = tf.Variable(0.1*np.random.randn(prev_layer_size, nb_hidden[i]), dtype=tf.float32, name='W'+str(i))
-            b = tf.Variable(0.1*np.random.randn(nb_hidden[i]), dtype=tf.float32, name='b'+str(i))
+            sigma = np.sqrt(2/prev_layer_size)*.1
+            W = tf.Variable(sigma*np.random.randn(prev_layer_size, nb_hidden[i]), dtype=tf.float32, name='W'+str(i))
+            b = tf.Variable(np.zeros(nb_hidden[i]), dtype=tf.float32, name='b'+str(i))
             h = tf.nn.relu(tf.matmul(prev_layer, W) + b, name='hidden'+str(i))
+
+            W_summary = tf.summary.histogram('weights'+str(i), W)
+            b_summary = tf.summary.histogram('biases'+str(i), b)
+
             prev_layer = h
             prev_layer_size = nb_hidden[i]
+
             self.parameters.extend([W, b])
-        W = tf.Variable(0.1*np.random.randn(prev_layer_size, nb_outputs), dtype=tf.float32, name='W'+str(len(nb_hidden)))
-        b = tf.Variable(0.1*np.random.randn(nb_outputs), dtype=tf.float32, name='b'+str(len(nb_hidden)))
+            summaries.extend([W_summary, b_summary])
+            
+        sigma = np.sqrt(2/prev_layer_size)
+        W = tf.Variable(sigma*np.random.randn(prev_layer_size, nb_outputs), dtype=tf.float32, name='W'+str(len(nb_hidden)))
+        b = tf.Variable(np.zeros(nb_outputs), dtype=tf.float32, name='b'+str(len(nb_hidden)))
+        W_summary = tf.summary.histogram('weights'+str(len(nb_hidden)), W)
+        b_summary = tf.summary.histogram('biases'+str(len(nb_hidden)), b)
+        
+        summaries.extend([W_summary, b_summary])
         self.parameters.extend([W, b])
+        
         self.y = tf.add(tf.matmul(prev_layer, W), b, name='output')
         
         self.y_target = tf.placeholder(tf.float32, shape=(None, nb_outputs), name='target_output')
         self.loss = tf.losses.huber_loss(self.y_target, self.y)
-        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+        self.optimizer = tf.train.MomentumOptimizer(learning_rate, 0.8)
         self.train_step = self.optimizer.minimize(self.loss)
         
         self.softmax_indexes = tf.placeholder(tf.int32, name='softmax_indexes')
         self.softmax_temperature = tf.placeholder(tf.float32, name='softmax_temperature')
         self.probs = tf.nn.softmax(tf.gather(self.y/self.softmax_temperature, self.softmax_indexes, axis=1, name='probabilities'))
         
-        self.loss_summary = tf.summary.scalar('loss', self.loss)
-        if logdir:
-            self.writer = tf.summary.FileWriter(logdir, self.session.graph)
+        loss_summary = tf.summary.scalar('loss', self.loss)
+        summaries.append(loss_summary)
+        self.summary = tf.summary.merge(summaries)
+
+        self.writer = None
 
     def assignParameters(self, new_parameters):
         for i in range(len(self.parameters)):
@@ -43,13 +59,13 @@ class NeuralNet:
 
     def learn(self, x, y_target):
         summary, _ = self.session.run(
-            [self.loss_summary, self.train_step],
+            [self.summary, self.train_step],
             feed_dict={
                 self.x : x,
                 self.y_target : y_target
             }
         )
-        if self.logdir:
+        if self.writer:# and self.iterations % 10 == 0:
             self.writer.add_summary(summary, self.iterations)
         self.iterations += 1
         
@@ -86,10 +102,14 @@ class Dqn:
         self.last_state = None
         self.last_action = None
         self.session = tf.Session()
+
         self.target_network = NeuralNet(self.session, 9, nb_hidden, 9, learning_rate)
+        self.q_network = NeuralNet(self.session, 9, nb_hidden, 9, learning_rate)
+
         logdir='/tmp/tensorboard/ia_velha/batch_size={}, steps_to_refresh={}, {} - {}'.format(self.batch_size, self.target_net_update_steps, [reward_decay, nb_hidden, learning_rate, softmax_temperature], time.ctime())
-        self.q_network = NeuralNet(self.session, 9, nb_hidden, 9, learning_rate, logdir=logdir)
-        # self.q_network = NeuralNet(9, nb_hidden, 9, learning_rate)
+        self.writer = tf.summary.FileWriter(logdir, self.session.graph)
+        self.q_network.writer = self.writer
+
         self.session.run(tf.global_variables_initializer())
         self.training_steps = 0
         
