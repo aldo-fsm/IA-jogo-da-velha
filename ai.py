@@ -3,15 +3,21 @@ import tensorflow as tf
 import numpy as np
 
 class NeuralNet:
-    def __init__(self, session, nb_inputs, nb_hidden, nb_outputs, learning_rate):
+    def __init__(self, session, nb_hidden, nb_outputs, learning_rate):
         self.iterations = 0
         self.nb_outputs = nb_outputs
         self.parameters = []
         self.session = session
         summaries = []
-        self.x = tf.placeholder(tf.float32, shape=(None, nb_inputs), name='input')
-        prev_layer = self.x
-        prev_layer_size = nb_inputs
+        self.x = tf.placeholder(tf.float32, shape=(None, 3, 3, 3), name='input')
+        filter1 = tf.Variable(0.1*np.random.randn(2, 2, 3, 7), dtype=tf.float32, name='filter1')
+        conv1 = tf.nn.relu(tf.nn.conv2d(self.x, filter1, [1,1,1,1], 'SAME'))
+        max_pool1 = tf.nn.max_pool(conv1, [1,2,2,1], [1,1,1,1], 'VALID')
+
+        summaries.append(tf.summary.image('filter', tf.transpose(filter1, [3, 0, 1, 2])))
+        self.parameters.append(filter1)
+        prev_layer = tf.reshape(max_pool1, [-1, 28])
+        prev_layer_size = 28
         for i in range(len(nb_hidden)):
             sigma = np.sqrt(2/prev_layer_size)*.1
             W = tf.Variable(sigma*np.random.randn(prev_layer_size, nb_hidden[i]), dtype=tf.float32, name='W'+str(i))
@@ -103,8 +109,8 @@ class Dqn:
         self.last_action = None
         self.session = tf.Session()
 
-        self.target_network = NeuralNet(self.session, 9, nb_hidden, 9, learning_rate)
-        self.q_network = NeuralNet(self.session, 9, nb_hidden, 9, learning_rate)
+        self.target_network = NeuralNet(self.session, nb_hidden, 9, learning_rate)
+        self.q_network = NeuralNet(self.session, nb_hidden, 9, learning_rate)
 
         logdir='/tmp/tensorboard/ia_velha/batch_size={}, steps_to_refresh={}, {} - {}'.format(self.batch_size, self.target_net_update_steps, [reward_decay, nb_hidden, learning_rate, softmax_temperature], time.ctime())
         self.writer = tf.summary.FileWriter(logdir, self.session.graph)
@@ -114,12 +120,12 @@ class Dqn:
         self.training_steps = 0
         
     def encode_board(self, board):
-        map_dict = {'X':-1,'':0,'O':1}
-        return list(map(lambda x : map_dict[x], board))
+        map_dict = {'X':[1,0,0],'':[0,1,0],'O':[0,0,1]}
+        return np.reshape(list(map(lambda x : map_dict[x], board)), (3,3,3))
 
-    def choose_action(self, state):
-        state = self.encode_board(state)
-        available_actions = [i for i in range(len(state)) if not state[i]]
+    def choose_action(self, board):
+        state = self.encode_board(board)
+        available_actions = [i for i in range(len(board)) if not board[i]]
         if len(available_actions) > 0:
             probs = self.q_network.predict_probs(
                 [state],
@@ -147,7 +153,7 @@ class Dqn:
         
         action = self.choose_action(new_state)
         new_state = self.encode_board(new_state)
-        if self.last_state:
+        if self.last_state is not None:
             self.memory.append(self.last_state, new_state, self.last_action, reward)
         if len(self.memory) > 0:
             last_state_batch, new_state_batch, action_batch, reward_batch = self.memory.sample(self.batch_size)

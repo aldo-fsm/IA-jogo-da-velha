@@ -4,12 +4,14 @@ from kivy.properties import ListProperty, StringProperty, NumericProperty
 from kivy.uix.button import Button
 from kivy.clock import Clock
 
+from matplotlib import pyplot as plt
 import time
 import numpy as np
 import ai
 
-dqn = ai.Dqn(0.9,[100,50],0.001, 1)
-
+dqn = ai.Dqn(0.9,[30],0.1, 1)
+states_q_values = {}
+TDs = {}
 class BoardScreen(Screen):
     board = ListProperty(9*[''])
     turn = StringProperty('X')
@@ -86,6 +88,21 @@ class BoardScreen(Screen):
         if self.status == 'running' and not self.board[position]:
             self.board[position] = self.turn
             self.nextTurn()
+        q_values = dqn.q_network.predict([dqn.encode_board(self.board)])
+        board_tuple = tuple(self.board)
+        if board_tuple in states_q_values:
+            last_q_values, _, n = states_q_values[board_tuple]
+            TD = q_values - last_q_values
+            states_q_values[board_tuple] = q_values, TD, n+1
+            # print(board_tuple, states_q_values[board_tuple])
+            # TDs.append(np.mean(np.abs(TD)))
+            # TDs.extend(list(TD[0]))
+            # print(TDs[-1])
+            # TDs[board_tuple].append(np.mean(np.abs(TD)))
+            # print(n+1, TDs[board_tuple][-1])
+        else:
+            states_q_values[board_tuple] = q_values, 0, 1
+            TDs[board_tuple] = []
         result = self.updateStatus()
         if self.status == 'running' and self.turn == 'O':
             choice = dqn.update(self.board, 0)# 0, 0.01, 0.1 ... ?
@@ -99,3 +116,6 @@ class GameApp(App):
 
 if __name__ == '__main__':
     GameApp().run()
+    # for s in TDs:
+    #     plt.plot(TDs[s])
+    plt.show()
