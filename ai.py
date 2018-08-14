@@ -10,14 +10,14 @@ class NeuralNet:
         self.session = session
         summaries = []
         self.x = tf.placeholder(tf.float32, shape=(None, 3, 3, 3), name='input')
-        filter1 = tf.Variable(0.1*np.random.randn(2, 2, 3, 7), dtype=tf.float32, name='filter1')
+        filter1 = tf.Variable(0.1*np.random.randn(2, 2, 3, 128), dtype=tf.float32, name='filter1')
         conv1 = tf.nn.relu(tf.nn.conv2d(self.x, filter1, [1,1,1,1], 'SAME'))
         max_pool1 = tf.nn.max_pool(conv1, [1,2,2,1], [1,1,1,1], 'VALID')
 
         summaries.append(tf.summary.image('filter', tf.transpose(filter1, [3, 0, 1, 2])))
         self.parameters.append(filter1)
-        prev_layer = tf.reshape(max_pool1, [-1, 28])
-        prev_layer_size = 28
+        prev_layer = tf.reshape(max_pool1, [-1, 512])
+        prev_layer_size = int(prev_layer.shape[1])
         for i in range(len(nb_hidden)):
             sigma = np.sqrt(2/prev_layer_size)*.1
             W = tf.Variable(sigma*np.random.randn(prev_layer_size, nb_hidden[i]), dtype=tf.float32, name='W'+str(i))
@@ -47,7 +47,7 @@ class NeuralNet:
         mask=tf.one_hot(self.target_indexes, self.y.shape[1], on_value=True, off_value=False)
         self.y_target = tf.placeholder(tf.float32, shape=(None), name='target_output')
         self.loss = tf.losses.huber_loss(self.y_target, tf.boolean_mask(self.y, mask))
-        self.optimizer = tf.train.MomentumOptimizer(learning_rate, 0.8)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate, epsilon=0.001)
         self.train_step = self.optimizer.minimize(self.loss)
         
         self.softmax_indexes = tf.placeholder(tf.int32, name='softmax_indexes')
@@ -103,9 +103,9 @@ class Dqn:
         self.reward_window_length = 100
         self.reward_window = []
         self.softmax_temperature = softmax_temperature
-        self.target_net_update_steps = 150
-        self.batch_size = 1000
-        self.memory_capacity = 10000
+        self.target_net_update_steps = 20
+        self.batch_size = 500
+        self.memory_capacity = 1000
         self.memory = ExperienceReplay(self.memory_capacity)
         self.last_state = None
         self.last_action = None
@@ -129,16 +129,22 @@ class Dqn:
         state = self.encode_board(board)
         available_actions = [i for i in range(len(board)) if not board[i]]
         if len(available_actions) > 0:
-            probs = self.q_network.predict_probs(
-                [state],
-                softmax_temperature=self.softmax_temperature,
-                softmax_indexes=available_actions
-            )[0]
-            sorting_indexes = np.argsort(probs)
-            index = np.argmax(np.random.multinomial(1, probs[sorting_indexes]))
-            available_actions = np.array(available_actions)[sorting_indexes]
-            action = available_actions[index]
-            return action
+            # probs = self.q_network.predict_probs(
+            #     [state],
+            #     softmax_temperature=self.softmax_temperature,
+            #     softmax_indexes=available_actions
+            # )[0]
+            # sorting_indexes = np.argsort(probs)
+            # index = np.argmax(np.random.multinomial(1, probs[sorting_indexes]))
+            # available_actions = np.array(available_actions)[sorting_indexes]
+            # action = available_actions[index]
+            # return action
+            epsilon = 0.1
+            if np.random.rand() < epsilon:
+                return np.random.choice(available_actions)
+            else:
+                q_values = self.q_network.predict([state])[0][available_actions]
+                return available_actions[np.argmax(q_values)]
         else:
             return -1
 
@@ -161,11 +167,6 @@ class Dqn:
             last_state_batch, new_state_batch, action_batch, reward_batch = self.memory.sample(self.batch_size)
             new_state_value = np.max(self.target_network.predict(new_state_batch), axis=1)
             target_q = reward_batch + self.reward_decay*new_state_value
-            # target_batch = []
-            # for i in range(len(target_q)):
-            #     row = np.array(current_q[i])
-            #     row[action_batch[i]] = target_q[i]
-            #     target_batch.append(row)
             self.q_network.learn(last_state_batch, target_q, action_batch)
             if self.training_steps % self.target_net_update_steps == 0:
                 self.target_network.assignParameters(self.q_network.parameters)
