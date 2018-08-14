@@ -43,9 +43,10 @@ class NeuralNet:
         self.parameters.extend([W, b])
         
         self.y = tf.add(tf.matmul(prev_layer, W), b, name='output')
-        
-        self.y_target = tf.placeholder(tf.float32, shape=(None, nb_outputs), name='target_output')
-        self.loss = tf.losses.huber_loss(self.y_target, self.y)
+        self.target_indexes = tf.placeholder(tf.int32, shape=[None], name='target_indexes')
+        mask=tf.one_hot(self.target_indexes, self.y.shape[1], on_value=True, off_value=False)
+        self.y_target = tf.placeholder(tf.float32, shape=(None), name='target_output')
+        self.loss = tf.losses.huber_loss(self.y_target, tf.boolean_mask(self.y, mask))
         self.optimizer = tf.train.MomentumOptimizer(learning_rate, 0.8)
         self.train_step = self.optimizer.minimize(self.loss)
         
@@ -63,12 +64,13 @@ class NeuralNet:
         for i in range(len(self.parameters)):
             self.session.run(self.parameters[i].assign(new_parameters[i]))
 
-    def learn(self, x, y_target):
+    def learn(self, x, y_target, target_indexes):
         summary, _ = self.session.run(
             [self.summary, self.train_step],
             feed_dict={
                 self.x : x,
-                self.y_target : y_target
+                self.y_target : y_target,
+                self.target_indexes : target_indexes
             }
         )
         if self.writer:# and self.iterations % 10 == 0:
@@ -159,15 +161,12 @@ class Dqn:
             last_state_batch, new_state_batch, action_batch, reward_batch = self.memory.sample(self.batch_size)
             new_state_value = np.max(self.target_network.predict(new_state_batch), axis=1)
             target_q = reward_batch + self.reward_decay*new_state_value
-            current_q = self.q_network.predict(last_state_batch)
-            
-            target_batch = []
-            for i in range(len(target_q)):
-                row = np.array(current_q[i])
-                row[action_batch[i]] = target_q[i]
-                target_batch.append(row)
-            
-            self.q_network.learn(last_state_batch, target_batch)
+            # target_batch = []
+            # for i in range(len(target_q)):
+            #     row = np.array(current_q[i])
+            #     row[action_batch[i]] = target_q[i]
+            #     target_batch.append(row)
+            self.q_network.learn(last_state_batch, target_q, action_batch)
             if self.training_steps % self.target_net_update_steps == 0:
                 self.target_network.assignParameters(self.q_network.parameters)
 
